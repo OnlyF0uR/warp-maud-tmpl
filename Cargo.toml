@@ -1,0 +1,10 @@
+[package]
+name = "warp-maud-tmpl"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.41.1", features = ["full"] }
+warp = "0.3.7"
+pretty_env_logger = "0.4"
+maud = "0.26.0"
