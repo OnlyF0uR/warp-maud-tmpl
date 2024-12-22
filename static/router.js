@@ -1,28 +1,46 @@
-// Ensure that this runs when the page is fully loaded
-document.addEventListener('DOMContentLoaded', () => {
-  // Intercept link clicks and prevent full-page reload
-  document.body.addEventListener('click', (e) => {
-    const target = e.target.closest('a');
-    if (target && target.href && target.origin === window.location.origin) {
-      e.preventDefault(); // Prevent the full page reload
-      navigate(target.pathname); // Call navigate function
+document.addEventListener("DOMContentLoaded", () => {
+  // Cache for storing fetched content
+  const pageCache = new Map();
+  let isNavigating = false;
+
+  function updateTitle(newDoc) {
+    const newTitle = newDoc.querySelector("title");
+    if (newTitle) {
+      document.title = newTitle.textContent;
     }
-  });
+  }
 
-  // Handle the browser's back/forward button using popstate
-  window.addEventListener('popstate', () => {
-    navigate(window.location.pathname);
-  });
+  function updateDynamicLinks(newDoc) {
+    const oldLinks = Array.from(
+      document.querySelectorAll("link[data-dynamic]"),
+    );
+    const newLinks = newDoc.querySelectorAll("link[data-dynamic]");
 
-  // Function to update dynamic styles in the head
+    // Remove links that don't exist in new document
+    oldLinks.forEach((link) => {
+      if (!Array.from(newLinks).find((newLink) => newLink.isEqualNode(link))) {
+        link.remove();
+      }
+    });
+
+    // Add new links that aren't in current document
+    newLinks.forEach((linkNode) => {
+      if (!oldLinks.find((oldLink) => oldLink.isEqualNode(linkNode))) {
+        const clone = linkNode.cloneNode(true);
+        clone.setAttribute("data-dynamic", "true");
+        document.head.appendChild(clone);
+      }
+    });
+  }
+
   function updateDynamicStyles(newDoc) {
     const oldStyles = Array.from(
-      document.querySelectorAll('style[data-dynamic]')
+      document.querySelectorAll("style[data-dynamic]"),
     );
+    const newStyles = newDoc.querySelectorAll("style[data-dynamic]");
 
-    // Add new <style> elements from the new document
-    const newStyles = newDoc.querySelectorAll('style[data-dynamic]');
-    document.querySelectorAll('style[data-dynamic]').forEach(function (style) {
+    // Remove styles that don't exist in new document
+    oldStyles.forEach((style) => {
       if (
         !Array.from(newStyles).find((newStyle) => newStyle.isEqualNode(style))
       ) {
@@ -30,104 +48,188 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    for (const styleNode of newStyles) {
-      if (oldStyles.find((oldStyle) => oldStyle.isEqualNode(styleNode))) {
-        continue;
+    // Add new styles that aren't in current document
+    newStyles.forEach((styleNode) => {
+      if (!oldStyles.find((oldStyle) => oldStyle.isEqualNode(styleNode))) {
+        const clone = styleNode.cloneNode(true);
+        clone.setAttribute("data-dynamic", "true");
+        document.head.appendChild(clone);
       }
-
-      styleNode.remove();
-
-      const clone = styleNode.cloneNode(true);
-      // clone.setAttribute('data-dynamic', 'true'); // Mark as dynamic for cleanup
-      document.head.appendChild(clone);
-    }
+    });
   }
 
-  // Execute inline script content
-  function executeInlineScript(scriptContent) {
-    const script = document.createElement('script');
-    script.textContent = scriptContent;
-    document.body.appendChild(script);
-  }
-
-  // Dynamically load and execute scripts
   async function updateDynamicScripts(newDoc) {
-    // clearDynamicScripts();
-    const oldScripts = Array.from(
-      document.querySelectorAll('script[data-dynamic]')
-    );
+    // Static counter outside function scope
+    if (!window._scriptCounter) window._scriptCounter = 0;
 
-    const newScripts = newDoc.querySelectorAll('script[data-dynamic]');
-    document
-      .querySelectorAll('script[data-dynamic]')
-      .forEach(function (script) {
-        if (
-          !Array.from(newScripts).find((newScript) =>
-            newScript.isEqualNode(script)
-          )
-        ) {
-          script.remove();
-        }
-      });
+    const oldScripts = Array.from(
+      document.querySelectorAll("script[data-dynamic]"),
+    );
+    const newScripts = newDoc.querySelectorAll("script[data-dynamic]");
+
+    oldScripts.forEach((script) => {
+      if (
+        !Array.from(newScripts).find(
+          (newScript) =>
+            (script.src && script.src === newScript.src) ||
+            (!script.src &&
+              script.getAttribute("data-id") ===
+                newScript.getAttribute("data-id")),
+        )
+      ) {
+        script.remove();
+      }
+    });
 
     for (const scriptNode of newScripts) {
-      if (oldScripts.find((oldScript) => oldScript.isEqualNode(scriptNode))) {
-        continue;
-      }
-
-      scriptNode.remove();
-
       if (scriptNode.src) {
-        // Handle external scripts
-        const newScript = document.createElement('script');
+        const exists = oldScripts.some(
+          (oldScript) => oldScript.src === scriptNode.src,
+        );
+        if (exists) continue;
+
+        const newScript = document.createElement("script");
+        newScript.setAttribute("data-dynamic", "true");
         newScript.src = scriptNode.src;
-        // newScript.setAttribute('data-dynamic', 'true');
-        newScript.async = true;
-        document.body.appendChild(newScript);
+
+        const parent =
+          scriptNode.parentNode.tagName === "HEAD"
+            ? document.head
+            : document.body;
+        parent.appendChild(newScript);
       } else if (scriptNode.textContent) {
-        // Handle inline scripts
-        executeInlineScript(scriptNode.textContent);
-      }
-    }
-  }
-
-  // The navigate function to dynamically load content
-  async function navigate(path) {
-    try {
-      // Fetch the new content (only the #app div)
-      const response = await fetch(path);
-
-      if (response.ok) {
-        const html = await response.text();
-
-        // Use DOMParser to parse the new content and extract only the #app div
-        const parser = new DOMParser();
-        const newDoc = parser.parseFromString(html, 'text/html');
-
-        updateDynamicStyles(newDoc);
-
-        const newContent = newDoc.querySelector('#app');
-
-        if (newContent) {
-          // Update the current #app div with the new content
-          document.querySelector('#app').innerHTML = newContent.innerHTML;
+        // Check for existing ID or assign new one
+        let scriptId = scriptNode.getAttribute("data-id");
+        if (!scriptId) {
+          scriptId = `script_${window._scriptCounter++}`;
+          scriptNode.setAttribute("data-id", scriptId);
         }
 
-        updateDynamicScripts(newDoc);
+        const exists = oldScripts.some(
+          (oldScript) => oldScript.getAttribute("data-id") === scriptId,
+        );
+        if (exists) continue;
 
-        // Update the browser history without reloading the page
-        window.history.pushState({}, '', path);
+        const newScript = document.createElement("script");
+        newScript.setAttribute("data-dynamic", "true");
+        newScript.setAttribute("data-id", scriptId);
 
-        const event = new CustomEvent('navigation', {
-          detail: { path },
-        });
-        document.dispatchEvent(event);
-        console.log('Navigated to:', path);
-      } else {
-        console.error('Failed to load content:', response.status);
+        const wrappedContent = `(function() {
+            if (window['${scriptId}']) return;
+            window['${scriptId}'] = true;
+            ${scriptNode.textContent}
+          })();`;
+        newScript.textContent = wrappedContent;
+        newScript.async = true;
+
+        const parent =
+          scriptNode.parentNode.tagName === "HEAD"
+            ? document.head
+            : document.body;
+        parent.appendChild(newScript);
       }
-    } catch (err) {
-      console.error('Error during navigation:', err);
     }
   }
+
+  async function navigate(path, { pushState = true } = {}) {
+    if (isNavigating) return;
+    isNavigating = true;
+
+    try {
+      // Check cache first
+      let newDoc;
+      if (pageCache.has(path)) {
+        newDoc = pageCache.get(path);
+      } else {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+        try {
+          const response = await fetch(path, {
+            signal: controller.signal,
+            headers: {
+              "X-Requested-With": "XMLHttpRequest",
+            },
+          });
+
+          clearTimeout(timeoutId);
+
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const html = await response.text();
+          newDoc = new DOMParser().parseFromString(html, "text/html");
+
+          // Cache the parsed document
+          pageCache.set(path, newDoc.cloneNode(true));
+        } catch (error) {
+          if (error.name === "AbortError") {
+            throw new Error("Navigation timeout");
+          }
+          throw error;
+        }
+      }
+
+      // Update head elements and dynamic resources
+      updateDynamicLinks(newDoc);
+      updateDynamicStyles(newDoc);
+      updateTitle(newDoc);
+
+      // Update content
+      const newContent = newDoc.querySelector("#app");
+      if (!newContent) {
+        throw new Error("New content not found");
+      }
+
+      const currentApp = document.querySelector("#app");
+      currentApp.innerHTML = newContent.innerHTML;
+
+      // Load scripts
+      await updateDynamicScripts(newDoc);
+
+      if (pushState) {
+        window.history.pushState({ path }, "", path);
+      }
+
+      document.dispatchEvent(
+        new CustomEvent("navigation", {
+          detail: { path, success: true },
+        }),
+      );
+    } catch (error) {
+      console.error("Navigation error:", error);
+      document.dispatchEvent(
+        new CustomEvent("navigation", {
+          detail: { path, success: false, error },
+        }),
+      );
+    } finally {
+      isNavigating = false;
+    }
+  }
+
+  // Click handler for navigation
+  document.body.addEventListener("click", (e) => {
+    const target = e.target.closest("a");
+    if (!target) return;
+
+    if (target.href && target.origin === window.location.origin) {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      if (target.hasAttribute("download") || target.target) return;
+
+      e.preventDefault();
+      navigate(target.pathname);
+    }
+  });
+
+  // Handle back/forward navigation
+  window.addEventListener("popstate", (e) => {
+    if (e.state && e.state.path) {
+      navigate(e.state.path, { pushState: false });
+    }
+  });
+
+  // Cache the initial page
+  pageCache.set(window.location.pathname, document.cloneNode(true));
 });
